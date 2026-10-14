@@ -8,7 +8,8 @@ from pythran.spec import spec_parser
 
 ARRAYS = ("import numpy as np; np.random.seed(0); n = 1000000; "
           "a = np.random.rand(n) + 1; b = np.random.rand(n) + 1; "
-          "c = np.random.rand(n) + 1")
+          "c = np.random.rand(n) + 1; cols = 1000; rows = 500; "
+          "image_list = [x % 10 + y % 20 for x in range(cols) for y in range(rows)]")
 
 KERNELS = [
     ("cosine", """
@@ -45,6 +46,47 @@ def elementwise(a, b, c):
 def elementwise_long(a, b, c):
     return ((a * b + c) * (a * b + c) + (a * b + c)) / (1. + (a * b + c))
 """, "elementwise_long(a, b, c)", 200),
+    ("sobelFilter", """
+#pythran export sobelFilter(int list, int, int)
+def sobelFilter(original_image, cols, rows):
+    edge_image = list(range(len(original_image)))
+    for i in range(rows):
+        edge_image[i * cols] = 255
+        edge_image[((i + 1) * cols) - 1] = 255
+
+    for i in range(1, cols - 1):
+        edge_image[i] = 255
+        edge_image[i + ((rows - 1) * cols)] = 255
+
+    for iy in range(1, rows - 1):
+        for ix in range(1, cols - 1):
+            sum_x = 0
+            sum_y = 0
+            sum = 0
+            #x gradient approximation
+            sum_x += original_image[ix - 1 + (iy - 1) * cols] * -1
+            sum_x += original_image[ix + (iy - 1) * cols] * -2
+            sum_x += original_image[ix + 1 + (iy - 1) * cols] * -1
+            sum_x += original_image[ix - 1 + (iy + 1) * cols] * 1
+            sum_x += original_image[ix + (iy + 1) * cols] * 2
+            sum_x += original_image[ix + 1 + (iy + 1) * cols] * 1
+            sum_x = min(255, max(0, sum_x))
+            #y gradient approximatio
+            sum_y += original_image[ix - 1 + (iy - 1) * cols] * 1
+            sum_y += original_image[ix + 1 + (iy - 1) * cols] * -1
+            sum_y += original_image[ix - 1 + (iy) * cols] * 2
+            sum_y += original_image[ix + 1 + (iy) * cols] * -2
+            sum_y += original_image[ix - 1 + (iy + 1) * cols] * 1
+            sum_y += original_image[ix + 1 + (iy + 1) * cols] * -1
+            sum_y = min(255, max(0, sum_y))
+
+            #GRADIENT MAGNITUDE APPROXIMATION
+            sum = abs(sum_x) + abs(sum_y)
+
+            #make edges black and background white
+            edge_image[ix + iy * cols] = 255 - (255 & sum)
+    return edge_image
+""", "sobelFilter(image_list, cols, rows)", 5),
     ("add3", """
 #pythran export add3(float[:], float[:], float[:])
 def add3(a, b, c):
