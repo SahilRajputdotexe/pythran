@@ -1,0 +1,58 @@
+name: perf-master
+
+on:
+  push:
+    branches:
+      - "dbg-**"
+jobs:
+  perf:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++-12, clang++-14]
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+    - name: Install
+      run: |
+        sudo apt install g++-12 clang-14 libopenblas-dev
+        git remote add upstream https://github.com/serge-sans-paille/pythran.git
+        git fetch upstream master
+        cp .github/bench/perf_master.py /tmp/perf_master.py
+        for rev in 94d246c4 297a5a82; do
+          git worktree add /tmp/src-$rev $rev
+          python -m venv /tmp/venv-$rev
+          /tmp/venv-$rev/bin/pip install -q scipy-openblas64 numpy scipy
+          /tmp/venv-$rev/bin/pip install -q "/tmp/src-$rev[build]"
+        done
+        mkdir -p ~/.config /tmp/cxx
+        printf '[compiler]\nblas=scipy-openblas\n' > ~/.config/.pythranrc
+    - name: Bench
+      run: |
+        export CXX=${{ matrix.cxx }}
+        case "$CXX" in g++*) export CC=gcc-12;; *) export CC=clang-14;; esac
+        cd /tmp
+        for round in 1 2 3; do
+          for rev in 94d246c4 297a5a82; do
+            /tmp/venv-$rev/bin/python /tmp/perf_master.py $rev | tee -a /tmp/perf.jsonl
+          done
+        done
+        python - <<'PY'
+        import json, collections
+        best = collections.defaultdict(lambda: float("inf"))
+        for line in open("/tmp/perf.jsonl"):
+            d = json.loads(line)
+            best[d["kernel"], d["tag"]] = min(best[d["kernel"], d["tag"]], d["t"])
+        for k in dict.fromkeys(k for k, _ in best):
+            old, new = best[k, "94d246c4"], best[k, "297a5a82"]
+            print("%-18s 94d246c4 %.6f  297a5a82 %.6f  %+.1f%%" % (k, old, new, (new - old) / old * 100))
+        PY
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cxx-${{ matrix.cxx }}
+        path: /tmp/cxx
